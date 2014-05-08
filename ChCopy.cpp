@@ -50,11 +50,6 @@ class ChCopy : public AUMonotimbralInstrumentBase {
                             AudioUnitParameterID inParameterID,
                             AudioUnitParameterInfo &outParameterInfo);
 
-  MidiControls *GetControls(MusicDeviceGroupID inChannel) {
-    SynthGroupElement *group = GetElForGroupID(inChannel);
-    return (MidiControls *)group->GetMIDIControlHandler();
-  }
-
  private:
   MIDIOutputCallbackHelper mCallbackHelper;
 
@@ -80,7 +75,8 @@ enum {
   kParameter_OtherCC = 6,
   kParameter_PitchBend = 7,
   kParameter_OtherMessages = 8,
-  kNumberOfParameters = 9
+  kParameter_OriginChMute = 9,
+  kNumberOfParameters = 10
 };
 // static const map<int, CFStringRef> kMapParam2Name;
 
@@ -93,6 +89,7 @@ static const CFStringRef kParamName_Damper = CFSTR("Damper");
 static const CFStringRef kParamName_OtherCC = CFSTR("Other Control Changes");
 static const CFStringRef kParamName_PitchBend = CFSTR("PitchBend");
 static const CFStringRef kParamName_OtherMessages = CFSTR("Other Messages");
+static const CFStringRef kParamName_OriginChMute = CFSTR("Origin Ch Mute");
 
 ChCopy::ChCopy(AudioComponentInstance inComponentInstance)
     : AUMonotimbralInstrumentBase(inComponentInstance, 0,
@@ -110,6 +107,7 @@ ChCopy::ChCopy(AudioComponentInstance inComponentInstance)
   Globals()->SetParameter(kParameter_OtherCC, 1);
   Globals()->SetParameter(kParameter_PitchBend, 1);
   Globals()->SetParameter(kParameter_OtherMessages, 1);
+  Globals()->SetParameter(kParameter_OriginChMute, 0);
 
 #ifdef DEBUG
   string bPath, bFullFileName;
@@ -247,6 +245,10 @@ OSStatus ChCopy::GetParameterInfo(AudioUnitScope inScope,
       AUBase::FillInParameterName(outParameterInfo, kParamName_OtherMessages,
                                   false);
       break;
+    case kParameter_OriginChMute:
+      AUBase::FillInParameterName(outParameterInfo, kParamName_OriginChMute,
+                                  false);
+      break;
     default:
       return kAudioUnitErr_InvalidParameter;
   }
@@ -254,7 +256,8 @@ OSStatus ChCopy::GetParameterInfo(AudioUnitScope inScope,
   if (inParameterID == kParameter_Damper ||
       inParameterID == kParameter_OtherCC ||
       inParameterID == kParameter_PitchBend ||
-      inParameterID == kParameter_OtherMessages) {
+      inParameterID == kParameter_OtherMessages ||
+      inParameterID == kParameter_OriginChMute) {
     outParameterInfo.flags += SetAudioUnitParameterDisplayType(
         0, kAudioUnitParameterFlag_DisplaySquareRoot);
     outParameterInfo.unit = kAudioUnitParameterUnit_Boolean;
@@ -315,6 +318,7 @@ OSStatus ChCopy::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1,
 #endif
 
   bool add = false;
+  bool originChMute = false;
   int diff_data1 = 0;
   if (Globals()->GetParameter(kParameter_FromCh) - 1 == channel) {
     switch (status) {
@@ -322,8 +326,9 @@ OSStatus ChCopy::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1,
       case 0x90: {
         int min = Globals()->GetParameter(kParameter_KeyRangeMin);
         int max = Globals()->GetParameter(kParameter_KeyRangeMax);
-        if (data1 >= min && data2 <= max) {
+        if (data1 >= min && data1 <= max) {
           add = true;
+          originChMute = true;
           diff_data1 = Globals()->GetParameter(kParameter_Transpose);
         }
 
@@ -349,7 +354,9 @@ OSStatus ChCopy::HandleMidiEvent(UInt8 status, UInt8 channel, UInt8 data1,
     }
   }
 
-  mCallbackHelper.AddMIDIEvent(status, channel, data1, data2, inStartFrame);
+  if (!Globals()->GetParameter(kParameter_OriginChMute) || !originChMute)
+    mCallbackHelper.AddMIDIEvent(status, channel, data1, data2, inStartFrame);
+
   if (add)
     mCallbackHelper.AddMIDIEvent(status,
                                  Globals()->GetParameter(kParameter_ToCh) - 1,
